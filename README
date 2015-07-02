@@ -1,0 +1,13 @@
+1. Prepare:
+	1.1. Disable NetworkManager
+		prevent NetworkManager to control wireless interface,
+		modify /etc/NetworkManager.conf like above:
+		----
+			[keyfile]
+			unmanaged-devices=mac:<interface_hwaddr>;
+		----
+		more information by "man NetworkManager.conf"
+	1.2 Install package:
+		udhcpc # Simple DHCP daemon
+		ipcalc # calculate subnet ip
+
