@@ -1,0 +1,9 @@
+################################
+# wpa.conf Example
+# copy an instance as "wpa.conf"
+################################
+wpa_iface="wlan2"
+
+udhcpc_config_dns=no
+udhcpc_config_route=no
+udhcpc_default_metric=10
