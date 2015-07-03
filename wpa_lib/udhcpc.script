@@ -1,6 +1,11 @@
 #!/bin/sh
 # udhcpc script edited by Tim Riker <Tim@Rikers.org>
 
+. $(dirname $0)/wpa.conf || . $(dirname $0)/wpa_lib/wpa.conf
+config_dns=${udhcpc_config_dns:-no}
+config_route=${udhcpc_config_route:-no}
+default_metric=${udhcpc_default_metric:-10}
+
 RESOLV_CONF="/etc/resolv.conf"
 
 [ -n "$1" ] || { echo "Error: should be called from udhcpc"; exit 1; }
@@ -17,16 +22,22 @@ case "$1" in
 		;;
 
 	renew|bound)
+		metric=$default_metric
 		echo "Setting IP address $ip on $interface"
 		ifconfig $interface $ip $NETMASK $BROADCAST
 
-		if [ -n "$router" ] ; then
+		#get sub network
+		network="$(ipcalc -b -n $ip/$subnet | grep ^Network | grep -oE '([0-9]+\.){3}[0-9]+')"
+		#reset metric
+		route add -net $network netmask $subnet dev $interface metric $metric
+		route del -net $network netmask $subnet dev $interface metric 0
+
+		if [ -n "$router" ] && [ "${config_route}" = "yes" ]; then
 			echo "Deleting routers"
 			while route del default gw 0.0.0.0 dev $interface ; do
 				:
 			done
 
-			metric=0
 			for i in $router ; do
 				echo "Adding router $i"
 				route add default gw $i dev $interface metric $metric
@@ -45,7 +56,7 @@ case "$1" in
 			echo " Adding DNS server $i"
 			echo "nameserver $i" >> "$tmpfile"
 		done
-		mv "$tmpfile" "$realconf"
+		[ "${config_dns}" = "yes" ] && mv "$tmpfile" "$realconf"
 		;;
 esac
 
