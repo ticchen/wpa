@@ -1,0 +1,207 @@
+#!/bin/bash
+
+## include wpa lib
+. $(dirname $0)/wpa_lib/wpa_lib.sh
+
+wpa_stop()
+{
+	#######################
+	## stop udhcpc
+	#######################
+	if udhcpc_is_running > /dev/null; then
+		sudo kill $(udhcpc_pid)
+	else
+		: # do nothting
+	fi
+	rm -f $(udhcpc_pidfile)
+
+	#######################
+	## stop wpa_supplicant
+	#######################
+	if wpa_supplicant_is_running > /dev/null; then
+		sudo kill $(wpa_supplicant_pid)
+	else
+		: # do nothting
+	fi
+	rm -f $(wpa_supplicant_pidfile)
+
+	#######################
+	## stop wpa_cli
+	#######################
+	if wpa_cli_is_running > /dev/null; then
+		sudo kill $(wpa_cli_pid)
+	else
+		: # do nothting
+	fi
+	rm -f $(wpa_cli_pidfile)
+
+	## stop wireless interface
+	sudo ifconfig $wpa_iface 0.0.0.0 down
+
+	return 0
+}
+
+wpa_start()
+{
+	## start wireless interface
+	sudo ifconfig $wpa_iface 0.0.0.0 up
+
+	#######################
+	## start udhcpc to handle DHCP protocol
+	#######################
+	if udhcpc_is_running > /dev/null; then
+		: # udhcpc exist
+	else
+		sudo udhcpc -b -i "${wpa_iface}" -p "$(udhcpc_pidfile)" -s "${wpa_lib_dir}/udhcpc.script" >/dev/null 2>&1 &
+	fi
+
+	#######################
+	## start wpa_supplicant
+	#######################
+	if wpa_supplicant_is_running > /dev/null; then
+		: # supplicant exist
+	else
+		sudo wpa_supplicant -B -i "${wpa_iface}" -Dnl80211 -P "$(wpa_supplicant_pidfile)" -C "$(wpa_supplicant_controlfile)"
+	fi
+
+	#######################
+	## start wpa_cli daemon to monitor status
+	#######################
+	if wpa_cli_is_running > /dev/null ; then
+		: # wpa_cli exist
+	else
+		sudo wpa_cli -B -i "${wpa_iface}" -a "${wpa_lib_dir}/wpa_cli_action.sh" -P "$(wpa_cli_pidfile)" -p "$(wpa_supplicant_controlfile)"
+	fi
+
+	return 0
+}
+
+
+wpa_cli_func()
+{
+	if [ "$#" = "0" ]; then
+		wpa_cli -p "$(wpa_supplicant_controlfile)" "$@"
+	else
+		wpa_cli -p "$(wpa_supplicant_controlfile)" "$@" | grep -v "^Selected interface "
+	fi
+}
+
+
+wpa_connect()
+{
+	local security_type="$1"
+	local ssid="$2"
+	local password="$3"
+	local wep_index="${4:-1}"
+	wep_index=$((wep_index-1))
+
+	wpa_cli_func remove_network 0 >/dev/null 2>&1
+	wpa_cli_func add_network >/dev/null
+	if [ "$security_type" = "open" ]; then
+		wpa_cli_func set_network 0 ssid "\"$ssid\"" > /dev/null
+	elif [ "$security_type" = "wep" ]; then
+		wpa_cli_func set_network 0 ssid "\"$ssid\"" > /dev/null
+		wpa_cli_func set_network 0 key_mgmt NONE
+		wpa_cli_func set_network 0 wep_tx_keyidx "${wep_index}" > /dev/null
+		local password_len="${#password}"
+		if [ "${password_len}" = "5" ] || [ "${password_len}" = "13" ]; then
+			wpa_cli_func set_network 0 "wep_key${wep_index}" "\"${password}\"" > /dev/null
+		elif [ "${password_len}" = "10" ] || [ "${password_len}" = "26" ]; then
+			wpa_cli_func set_network 0 "wep_key${wep_index}" "${password}" > /dev/null
+		fi
+	elif [ "$security_type" = "psk" ]; then
+		wpa_cli_func set_network 0 ssid "\"$ssid\"" > /dev/null
+		wpa_cli_func set_network 0 key_mgmt WPA-PSK > /dev/null
+		wpa_cli_func set_network 0 psk "\"$password\"" > /dev/null
+	fi
+
+	#wpa_cli_func enable_network 0 > /dev/null
+	wpa_cli_func select_network 0 > /dev/null
+	wpa_cli_func reconnect > /dev/null
+}
+
+
+wpa_disconnect()
+{
+	wpa_cli_func remove_network 0 >/dev/null
+	wpa_cli_func disconnect > /dev/null
+}
+
+
+wpa_status()
+{
+	wpa_cli_func status 2>/dev/null
+}
+
+
+wpa_connected()
+{
+	eval "$(wpa_status)"
+	if [ "$wpa_state" = "COMPLETED" ] && [ -n "$ip_address" ]; then
+		echo "yes"
+		return 0
+	else
+		echo "no"
+		return 1
+	fi
+}
+
+
+wpa_wait_connected()
+{
+	second="${1:-30}"
+
+	while [ $second -gt 0 ]; do
+		if wpa_connected >/dev/null; then
+			echo "connected"
+			return 0
+		fi
+
+		second=$((second-1))
+		sleep 1
+	done
+	echo "timeout" 1>&2
+	return 1
+}
+
+
+action="$1"
+shift
+case "$action" in
+	"stop"|"down")
+		wpa_stop
+		;;
+	"start")
+		wpa_start
+		;;
+	"restart"|"reload")
+		wpa_stop
+		wpa_start
+		;;
+	"connect"|"conn")
+		wpa_connect "$@"
+		;;
+	"disconnect"|"disconn")
+		wpa_disconnect "$@"
+		;;
+	"status")
+		wpa_status
+		;;
+	"cli")
+		wpa_cli_func "$@"
+		;;
+	"connected")
+		wpa_connected
+		;;
+	"wait_connected")
+		wpa_wait_connected "$@"
+		;;
+	"debug")
+		wpa_supplicant_pid
+		;;
+	*)
+		usage
+		exit 1
+		;;
+esac
+
